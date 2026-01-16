@@ -12,7 +12,7 @@ export default function ResultsSummary({
 	const metrics = [
 		{ label: 'Participants', value: participants },
 		{ label: 'Emails Found', value: emailCount },
-		{ label: 'Inferred', value: emailCount - explicit },
+		// { label: 'Inferred', value: emailCount - explicit },
 	];
 
 	return (

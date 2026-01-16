@@ -1,17 +1,30 @@
-import Image from 'next/image'
+import Image from 'next/image';
 
-const PlatformBadge = ({platform}:{platform:string}) => {
-  return (
-    <div>
-        <Image src={
-            `${platform == "youtu.be" ? "/youtube.svg" : platform == "youtube" ? "/youtube.svg" : platform == "reddit"?"/reddit.svg":"facebook.svg"}`
-        }
-        width={100}
-        height={100}
-        alt={platform}
-        />
-    </div>
-  )
-}
+const PlatformBadge = ({ platform }: { platform: string }) => {
+	const getImagePath = (platform: string): string => {
+		const normalized = platform.toLowerCase();
+		if (normalized === 'youtube' || normalized === 'youtu.be') {
+			return '/YouTube.svg';
+		}
+		if (normalized === 'reddit') {
+			return '/Reddit.svg';
+		}
+		if (normalized === 'facebook') {
+			return '/Facebook.svg';
+		}
+		return '/YouTube.svg'; // default fallback
+	};
 
-export default PlatformBadge
+	return (
+		<div>
+			<Image
+				src={getImagePath(platform)}
+				width={100}
+				height={100}
+				alt={platform}
+			/>
+		</div>
+	);
+};
+
+export default PlatformBadge;

@@ -41,8 +41,10 @@ export default async function Home() {
 					</div>
 
 					<p className='mt-6 text-xs text-neutral-500'>
-						Emails are Extracted from posts participants using heuristic
-						algorithms. We use a combination of machine learning and natural language processing to extract the emails.
+						Emails are Extracted from posts participants using
+						heuristic algorithms. We use a combination of machine
+						learning and natural language processing to extract the
+						emails.
 					</p>
 				</div>
 
@@ -76,8 +78,20 @@ export default async function Home() {
 											</p>
 										</div>
 										<span className='ml-4 text-xs text-purple-900 capitalize'>
-										
-											<Image src={`/${analysisSession.platform.toLowerCase()}.svg`} alt={analysisSession.platform.toLowerCase()} width={70} height={70} />
+											<Image
+												src={
+													analysisSession.platform ===
+													'YOUTUBE'
+														? '/YouTube.svg'
+														: analysisSession.platform ===
+														  'REDDIT'
+														? '/Reddit.svg'
+														: '/Facebook.svg'
+												}
+												alt={analysisSession.platform.toLowerCase()}
+												width={70}
+												height={70}
+											/>
 										</span>
 									</div>
 								</Link>
