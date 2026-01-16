@@ -1,0 +1,1 @@
+export type platform = "youtube" | "facebook" | "reddit"

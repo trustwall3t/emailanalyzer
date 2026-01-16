@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password      String
+  role          UserRole @default(ADMIN)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions      AnalysisSession[]
+
+  @@index([email])
+}
+
+model AnalysisSession {
+  id             String      @id @default(uuid())
+  sourceUrl      String
+  platform       Platform
+  status         SessionStatus @default(PENDING)
+  userId         String
+
+  totalComments  Int?
+  totalParticipants Int?
+  contactSignalsFound Int?
+
+  createdAt      DateTime @default(now())
+  completedAt    DateTime?
+
+  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  participants   Participant[]
+
+  @@index([platform])
+  @@index([createdAt])
+  @@index([userId])
+}
+
+
+model Participant {
+  id            String   @id @default(uuid())
+  sessionId     String
+
+  username      String
+  displayName  String?
+  profileUrl   String?
+
+  commentSnippet String?
+  commentCount Int     @default(1)
+
+  createdAt    DateTime @default(now())
+
+  session      AnalysisSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  contactSignals ContactSignal[]
+
+  @@index([sessionId])
+  @@index([username])
+}
+
+
+model ContactSignal {
+  id            String   @id @default(uuid())
+  participantId String
+
+  type          ContactType
+  value         String
+
+  source        SignalSource
+  confidence    Int      // 0–100
+
+  isPrimary     Boolean  @default(false)
+  isMasked      Boolean  @default(true)
+
+  createdAt     DateTime @default(now())
+
+  participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@index([participantId])
+  @@index([type])
+  @@index([confidence])
+}
+
+
+enum Platform {
+  YOUTUBE
+  REDDIT
+  FACEBOOK
+}
+
+enum SessionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ContactType {
+  EMAIL
+}
+
+enum SignalSource {
+  EXPLICIT_COMMENT
+  USERNAME_INFERENCE
+  PROFILE_SCRAPE
+  HEURISTIC_GUESS
+}
+
+enum UserRole {
+  ADMIN
+}
