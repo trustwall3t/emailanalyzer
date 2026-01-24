@@ -12,9 +12,10 @@ type EmailData = {
 
 type ResultsTableProps = {
 	emails: EmailData[];
+	platform: string;
 };
 
-export default function ResultsTable({ emails }: ResultsTableProps) {
+export default function ResultsTable({ emails, platform }: ResultsTableProps) {
 	const [showToast, setShowToast] = useState(false);
 
 	useEffect(() => {
@@ -71,9 +72,14 @@ export default function ResultsTable({ emails }: ResultsTableProps) {
 					<table className='w-full text-sm'>
 						<thead className='bg-neutral-100'>
 							<tr>
-								<th className='px-4 py-3 text-left text-purple-900'>
-									Participant
-								</th>
+								{platform === 'youtube' ? (
+									<th className='px-4 py-3 text-left text-purple-900'>
+										Participant
+									</th>
+								) : (
+									''
+								)}
+								
 								<th className='px-4 py-3 text-left text-purple-900'>
 									Email
 								</th>
@@ -86,7 +92,13 @@ export default function ResultsTable({ emails }: ResultsTableProps) {
 									className='border-t text-purple-900'
 								>
 									<td className='px-4 py-3'>
-										{emailData.user}
+										{platform === 'youtube' ? (
+											<p className='text-sm font-medium text-purple-900 truncate'>
+												{emailData.user}
+											</p>
+										) : (
+											''
+										)}
 									</td>
 									<td className='px-4 py-3'>
 										<div className='flex items-center gap-x-3'>
@@ -119,9 +131,14 @@ export default function ResultsTable({ emails }: ResultsTableProps) {
 						>
 							<div className='flex items-start justify-between gap-2'>
 								<div className='flex-1 min-w-0'>
-									<p className='text-sm font-medium text-purple-900 truncate'>
-										{emailData.user}
-									</p>
+									{platform === 'youtube' ? (
+										<p className='text-sm font-medium text-purple-900 truncate'>
+											{emailData.user}
+										</p>
+									) : (
+										''
+									)}
+									
 								</div>
 							</div>
 							<div className='flex items-center gap-2'>

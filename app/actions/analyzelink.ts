@@ -15,6 +15,30 @@ import { capitalize } from '../utils/Helpers';
 import inferEmailFromUsername from '../utils/InferEmail';
 import { extractEmailsFromText } from '../utils/ExtractEmail';
 
+// Priority email domains - Gmail, Yahoo, and Outlook have top priority
+const PRIORITY_EMAIL_DOMAINS = ['gmail.com', 'yahoo.com', 'outlook.com'];
+
+/**
+ * Sorts emails to prioritize Gmail, Yahoo, and Outlook domains
+ * Emails from priority domains appear first in the array
+ */
+function prioritizeEmails(emails: string[]): string[] {
+	return emails.sort((a, b) => {
+		const domainA = a.split('@')[1]?.toLowerCase() || '';
+		const domainB = b.split('@')[1]?.toLowerCase() || '';
+		
+		const isPriorityA = PRIORITY_EMAIL_DOMAINS.includes(domainA);
+		const isPriorityB = PRIORITY_EMAIL_DOMAINS.includes(domainB);
+		
+		// Priority emails come first
+		if (isPriorityA && !isPriorityB) return -1;
+		if (!isPriorityA && isPriorityB) return 1;
+		
+		// If both are priority or both are not, maintain original order
+		return 0;
+	});
+}
+
 export async function analyzeLink({ sourceUrl }: { sourceUrl: string }) {
 	// Require authentication - only admins can create sessions
 	const session = await requireAuth();
@@ -117,7 +141,8 @@ export async function analyzeLink({ sourceUrl }: { sourceUrl: string }) {
 
 			// If we found emails in any of the user's comments, use those (high confidence)
 			if (userData.extractedEmails.size > 0) {
-				const emailsArray = Array.from(userData.extractedEmails);
+				// Prioritize emails - Gmail, Yahoo, and Outlook come first
+				const emailsArray = prioritizeEmails(Array.from(userData.extractedEmails));
 				for (let i = 0; i < emailsArray.length; i++) {
 					const email = emailsArray[i];
 					await prisma.contactSignal.create({

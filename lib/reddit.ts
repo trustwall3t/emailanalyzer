@@ -60,11 +60,18 @@ export async function fetchRedditComments(postUrl: string) {
 				console.log('Resolving Reddit shortlink:', apiUrl);
 				
 				// First, try to get the HTML page and extract canonical URL
+				// Use realistic browser headers to avoid being blocked
 				const htmlRes = await fetch(apiUrl, {
 					method: 'GET',
 					headers: {
-						'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-						'Accept': 'text/html,application/xhtml+xml',
+						'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+						'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+						'Accept-Language': 'en-US,en;q=0.9',
+						'Accept-Encoding': 'gzip, deflate, br',
+						'Referer': 'https://www.reddit.com/',
+						'DNT': '1',
+						'Connection': 'keep-alive',
+						'Upgrade-Insecure-Requests': '1',
 					},
 					redirect: 'follow',
 				});
@@ -122,6 +129,16 @@ export async function fetchRedditComments(postUrl: string) {
 				}
 			} catch (redirectError) {
 				console.warn('Could not resolve shortlink:', redirectError);
+				// If we get a 403 during resolution, throw a helpful error
+				if (redirectError instanceof Error && redirectError.message.includes('403')) {
+					throw new Error(
+						'Reddit is blocking access to shortlinks. Please use the full post URL instead.\n\n' +
+						'To get the full URL:\n' +
+						'1. Open the Reddit post in your browser\n' +
+						'2. Copy the URL from the address bar\n' +
+						'3. It should look like: https://www.reddit.com/r/subreddit/comments/postid/title/'
+					);
+				}
 				// Continue with original URL - we'll try .json on it
 			}
 		}
@@ -133,11 +150,21 @@ export async function fetchRedditComments(postUrl: string) {
 
 		console.log('Fetching Reddit comments from:', apiUrl);
 
+		// Use realistic browser headers to avoid being blocked
 		const res = await fetch(apiUrl, {
 			headers: {
-				// Reddit requires a proper User-Agent header
-				'User-Agent': 'Mozilla/5.0 (compatible; EmailExtractor/1.0; +https://github.com/yourapp)',
-				'Accept': 'application/json',
+				// Realistic browser User-Agent
+				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+				'Accept': 'application/json, text/html, */*',
+				'Accept-Language': 'en-US,en;q=0.9',
+				'Accept-Encoding': 'gzip, deflate, br',
+				'Referer': 'https://www.reddit.com/',
+				'Origin': 'https://www.reddit.com',
+				'DNT': '1',
+				'Connection': 'keep-alive',
+				'Sec-Fetch-Dest': 'empty',
+				'Sec-Fetch-Mode': 'cors',
+				'Sec-Fetch-Site': 'same-origin',
 			},
 			// Follow redirects
 			redirect: 'follow',
@@ -170,7 +197,26 @@ export async function fetchRedditComments(postUrl: string) {
 			if (res.status === 404) {
 				throw new Error('Reddit post not found. Please check the URL and ensure the post exists. If using a shortlink, try the full post URL instead.');
 			} else if (res.status === 403) {
-				throw new Error('Access denied. The post may be private or removed.');
+				// 403 Forbidden - Reddit is blocking the request
+				if (isShortlink) {
+					throw new Error(
+						'Reddit is blocking access to shortlinks. Please use the full post URL instead.\n\n' +
+						'To get the full URL:\n' +
+						'1. Open the Reddit post in your browser\n' +
+						'2. Copy the URL from the address bar\n' +
+						'3. It should look like: https://www.reddit.com/r/subreddit/comments/postid/title/'
+					);
+				} else {
+					throw new Error(
+						'Reddit is blocking access to this post (403 Forbidden). This may happen if:\n' +
+						'- The post is private or restricted\n' +
+						'- Reddit is rate-limiting requests\n' +
+						'- The post has been removed\n\n' +
+						'Please try again later or use a different post URL.'
+					);
+				}
+			} else if (res.status === 429) {
+				throw new Error('Reddit rate limit exceeded. Please wait a few minutes and try again.');
 			} else {
 				throw new Error(`Reddit returned HTML instead of JSON (status: ${res.status}). Please use the full post URL format: https://www.reddit.com/r/subreddit/comments/postid/title/`);
 			}

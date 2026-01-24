@@ -91,9 +91,10 @@ export default async function SessionPage({
 					participants={analysisSession.totalParticipants || 0}
 					emailCount={analysisSession.contactSignalsFound || 0}
 					explicit={explicitCount}
+
 				/>
 
-				<ResultsTable emails={emails} />
+				<ResultsTable emails={emails} platform={platformName} />
 			</div>
 		</main>
 	);
