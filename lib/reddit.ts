@@ -47,99 +47,214 @@ export async function fetchRedditComments(postUrl: string) {
 			apiUrl = apiUrl.slice(0, -1);
 		}
 		
-		// Handle Reddit shortlinks (e.g., /s/xxxxx)
-		// Shortlinks may not work directly with .json, so we'll try to resolve them first
-		const isShortlink = apiUrl.includes('/s/');
-		
 		// Ensure we're using www.reddit.com (more reliable for JSON API)
 		apiUrl = apiUrl.replace(/^https?:\/\/(old\.|np\.)?reddit\.com/, 'https://www.reddit.com');
 		
-		// If it's a shortlink, try to resolve it to the full URL first
+		// Check for Reddit shortlinks (e.g., /s/xxxxx)
+		const isShortlink = apiUrl.includes('/s/');
+		
+		// If it's a shortlink, try multiple strategies to resolve it
 		if (isShortlink && !apiUrl.endsWith('.json')) {
+			console.log('Resolving Reddit shortlink:', apiUrl);
+			
+			let resolved = false;
+			let lastError: Error | null = null;
+			
+			// Strategy 1: Try .json endpoint directly on shortlink (sometimes works even when HTML doesn't)
 			try {
-				console.log('Resolving Reddit shortlink:', apiUrl);
+				const jsonUrl = `${apiUrl}.json`;
+				console.log('Strategy 1: Trying .json endpoint directly:', jsonUrl);
 				
-				// First, try to get the HTML page and extract canonical URL
-				// Use realistic browser headers to avoid being blocked
-				const htmlRes = await fetch(apiUrl, {
-					method: 'GET',
+				const jsonRes = await fetch(jsonUrl, {
 					headers: {
-						'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-						'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+						'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+						'Accept': 'application/json',
 						'Accept-Language': 'en-US,en;q=0.9',
-						'Accept-Encoding': 'gzip, deflate, br',
 						'Referer': 'https://www.reddit.com/',
-						'DNT': '1',
-						'Connection': 'keep-alive',
-						'Upgrade-Insecure-Requests': '1',
+						'Origin': 'https://www.reddit.com',
 					},
 					redirect: 'follow',
+					signal: AbortSignal.timeout(10000),
 				});
 				
-				// Get the final URL after redirects
-				let finalUrl = htmlRes.url;
-				
-				// If redirect didn't give us a /comments/ URL, try extracting from HTML
-				if (!finalUrl.includes('/comments/')) {
-					const html = await htmlRes.text();
-					
-					// Try to extract canonical URL from <link rel="canonical">
-					const canonicalMatch = html.match(/<link[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i);
-					if (canonicalMatch && canonicalMatch[1]) {
-						finalUrl = canonicalMatch[1];
-						console.log('Extracted canonical URL from HTML:', finalUrl);
-					} else {
-						// Try to extract from JSON-LD or other meta tags
-						const jsonLdMatch = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
-						if (jsonLdMatch) {
-							try {
-								const jsonLd = JSON.parse(jsonLdMatch[1]);
-								if (jsonLd.url) {
-									finalUrl = jsonLd.url;
-									console.log('Extracted URL from JSON-LD:', finalUrl);
+				if (jsonRes.ok && jsonRes.headers.get('content-type')?.includes('application/json')) {
+					const jsonText = await jsonRes.text();
+					if (jsonText && !jsonText.trim().startsWith('<!DOCTYPE') && !jsonText.trim().startsWith('<html')) {
+						// Success! We got JSON, extract the permalink from the response
+						try {
+							const jsonData = JSON.parse(jsonText);
+							if (jsonData && jsonData[0] && jsonData[0].data && jsonData[0].data.children && jsonData[0].data.children[0]) {
+								const postData = jsonData[0].data.children[0].data;
+								if (postData.permalink) {
+									const fullUrl = `https://www.reddit.com${postData.permalink}`;
+									console.log('Strategy 1 succeeded! Resolved to:', fullUrl);
+									apiUrl = fullUrl;
+									resolved = true;
 								}
-							} catch (e) {
-								// Ignore JSON parse errors
 							}
+						} catch (e) {
+							// JSON parse failed, try next strategy
+							console.log('Strategy 1: JSON parse failed, trying next strategy');
 						}
 					}
 				}
-				
-				// Clean up the final URL
-				if (finalUrl && finalUrl.includes('/comments/')) {
-					// Remove query params and hash
-					try {
-						const urlObj = new URL(finalUrl);
-						urlObj.search = '';
-						urlObj.hash = '';
-						finalUrl = urlObj.toString();
-					} catch (e) {
-						// If URL parsing fails, just use as is
-					}
+			} catch (e) {
+				console.log('Strategy 1 failed:', e instanceof Error ? e.message : String(e));
+				lastError = e instanceof Error ? e : new Error(String(e));
+			}
+			
+			// Strategy 2: Try HTML resolution with minimal headers (less likely to be blocked)
+			if (!resolved) {
+				try {
+					console.log('Strategy 2: Trying HTML resolution with minimal headers');
 					
-					// Remove trailing slash
-					if (finalUrl.endsWith('/')) {
-						finalUrl = finalUrl.slice(0, -1);
-					}
+					const htmlRes = await fetch(apiUrl, {
+						method: 'GET',
+						headers: {
+							'User-Agent': 'Mozilla/5.0 (compatible; RedditBot/1.0)',
+							'Accept': 'text/html',
+						},
+						redirect: 'follow',
+						signal: AbortSignal.timeout(15000),
+					});
 					
-					console.log('Shortlink resolved to:', finalUrl);
-					apiUrl = finalUrl;
-				} else {
-					console.warn('Could not resolve shortlink to full URL');
+					if (htmlRes.ok && htmlRes.status !== 403) {
+						let finalUrl = htmlRes.url;
+						
+						// If redirect didn't give us a /comments/ URL, try extracting from HTML
+						if (!finalUrl.includes('/comments/')) {
+							const html = await htmlRes.text();
+							
+							// Try to extract canonical URL
+							const canonicalMatch = html.match(/<link[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i);
+							if (canonicalMatch && canonicalMatch[1]) {
+								finalUrl = canonicalMatch[1];
+							} else {
+								// Try JSON-LD
+								const jsonLdMatch = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
+								if (jsonLdMatch) {
+									try {
+										const jsonLd = JSON.parse(jsonLdMatch[1]);
+										if (jsonLd.url) {
+											finalUrl = jsonLd.url;
+										}
+									} catch (e) {
+										// Ignore
+									}
+								}
+							}
+						}
+						
+						if (finalUrl && finalUrl.includes('/comments/')) {
+							try {
+								const urlObj = new URL(finalUrl);
+								urlObj.search = '';
+								urlObj.hash = '';
+								finalUrl = urlObj.toString();
+							} catch (e) {
+								// Ignore
+							}
+							
+							if (finalUrl.endsWith('/')) {
+								finalUrl = finalUrl.slice(0, -1);
+							}
+							
+							console.log('Strategy 2 succeeded! Resolved to:', finalUrl);
+							apiUrl = finalUrl;
+							resolved = true;
+						}
+					}
+				} catch (e) {
+					console.log('Strategy 2 failed:', e instanceof Error ? e.message : String(e));
+					lastError = e instanceof Error ? e : new Error(String(e));
 				}
-			} catch (redirectError) {
-				console.warn('Could not resolve shortlink:', redirectError);
-				// If we get a 403 during resolution, throw a helpful error
-				if (redirectError instanceof Error && redirectError.message.includes('403')) {
+			}
+			
+			// Strategy 3: Try HTML resolution with full browser headers (last resort)
+			if (!resolved) {
+				try {
+					console.log('Strategy 3: Trying HTML resolution with full browser headers');
+					
+					const htmlRes = await fetch(apiUrl, {
+						method: 'GET',
+						headers: {
+							'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+							'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+							'Accept-Language': 'en-US,en;q=0.9',
+							'Accept-Encoding': 'gzip, deflate, br',
+							'Referer': 'https://www.reddit.com/',
+							'DNT': '1',
+							'Connection': 'keep-alive',
+							'Upgrade-Insecure-Requests': '1',
+							'Sec-Fetch-Dest': 'document',
+							'Sec-Fetch-Mode': 'navigate',
+							'Sec-Fetch-Site': 'none',
+							'Sec-Fetch-User': '?1',
+						},
+						redirect: 'follow',
+						signal: AbortSignal.timeout(15000),
+					});
+					
+					if (htmlRes.ok && htmlRes.status !== 403) {
+						let finalUrl = htmlRes.url;
+						
+						if (!finalUrl.includes('/comments/')) {
+							const html = await htmlRes.text();
+							const canonicalMatch = html.match(/<link[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i);
+							if (canonicalMatch && canonicalMatch[1]) {
+								finalUrl = canonicalMatch[1];
+							}
+						}
+						
+						if (finalUrl && finalUrl.includes('/comments/')) {
+							try {
+								const urlObj = new URL(finalUrl);
+								urlObj.search = '';
+								urlObj.hash = '';
+								finalUrl = urlObj.toString();
+							} catch (e) {
+								// Ignore
+							}
+							
+							if (finalUrl.endsWith('/')) {
+								finalUrl = finalUrl.slice(0, -1);
+							}
+							
+							console.log('Strategy 3 succeeded! Resolved to:', finalUrl);
+							apiUrl = finalUrl;
+							resolved = true;
+						}
+					} else if (htmlRes.status === 403) {
+						// Got blocked, but don't throw yet - we'll handle it below
+						console.log('Strategy 3: Got 403 Forbidden');
+					}
+				} catch (e) {
+					console.log('Strategy 3 failed:', e instanceof Error ? e.message : String(e));
+					lastError = e instanceof Error ? e : new Error(String(e));
+				}
+			}
+			
+			// If all strategies failed, throw a helpful error
+			if (!resolved) {
+				const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
+				
+				if (isVercel) {
 					throw new Error(
-						'Reddit is blocking access to shortlinks. Please use the full post URL instead.\n\n' +
+						'Unable to resolve Reddit shortlink on Vercel. Reddit may be blocking server requests.\n\n' +
+						'Please try using the full post URL:\n' +
+						'1. Open the Reddit post in your browser\n' +
+						'2. Copy the full URL from the address bar\n' +
+						'3. Format: https://www.reddit.com/r/subreddit/comments/postid/title/'
+					);
+				} else {
+					throw new Error(
+						'Could not resolve Reddit shortlink. Please use the full post URL instead.\n\n' +
 						'To get the full URL:\n' +
 						'1. Open the Reddit post in your browser\n' +
 						'2. Copy the URL from the address bar\n' +
 						'3. It should look like: https://www.reddit.com/r/subreddit/comments/postid/title/'
 					);
 				}
-				// Continue with original URL - we'll try .json on it
 			}
 		}
 		
@@ -148,14 +263,24 @@ export async function fetchRedditComments(postUrl: string) {
 			apiUrl = `${apiUrl}.json`;
 		}
 
+		// Validate URL format - must be a /comments/ URL
+		if (!apiUrl.includes('/comments/')) {
+			throw new Error(
+				'Invalid Reddit URL format. Please use the full post URL with /comments/ in the path.\n\n' +
+				'Example: https://www.reddit.com/r/subreddit/comments/postid/title/\n\n' +
+				'If you used a shortlink, it may not have resolved correctly. Please use the full URL.'
+			);
+		}
+
 		console.log('Fetching Reddit comments from:', apiUrl);
 
 		// Use realistic browser headers to avoid being blocked
+		// Note: Reddit may still block server-side requests from certain IP ranges
 		const res = await fetch(apiUrl, {
 			headers: {
 				// Realistic browser User-Agent
-				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-				'Accept': 'application/json, text/html, */*',
+				'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+				'Accept': 'application/json',
 				'Accept-Language': 'en-US,en;q=0.9',
 				'Accept-Encoding': 'gzip, deflate, br',
 				'Referer': 'https://www.reddit.com/',
@@ -165,9 +290,12 @@ export async function fetchRedditComments(postUrl: string) {
 				'Sec-Fetch-Dest': 'empty',
 				'Sec-Fetch-Mode': 'cors',
 				'Sec-Fetch-Site': 'same-origin',
+				'Cache-Control': 'no-cache',
 			},
 			// Follow redirects
 			redirect: 'follow',
+			// Add timeout to prevent hanging
+			signal: AbortSignal.timeout(30000), // 30 second timeout
 		});
 
 		// Check content type before parsing
@@ -181,44 +309,45 @@ export async function fetchRedditComments(postUrl: string) {
 				contentType,
 				status: res.status,
 				responsePreview: responseText.substring(0, 200),
-				isShortlink,
 			});
 			
-			// Special message for shortlinks
-			if (isShortlink) {
-				throw new Error(
-					'Reddit shortlinks (/s/...) are not supported. Please use the full post URL instead.\n\n' +
-					'To get the full URL: Open the Reddit post in your browser and copy the URL from the address bar.\n' +
-					'It should look like: https://www.reddit.com/r/subreddit/comments/postid/title/'
-				);
-			}
-			
-			// Try to extract error from HTML if possible
-			if (res.status === 404) {
-				throw new Error('Reddit post not found. Please check the URL and ensure the post exists. If using a shortlink, try the full post URL instead.');
-			} else if (res.status === 403) {
+			// Handle specific error status codes
+			if (res.status === 403) {
 				// 403 Forbidden - Reddit is blocking the request
-				if (isShortlink) {
-					throw new Error(
-						'Reddit is blocking access to shortlinks. Please use the full post URL instead.\n\n' +
-						'To get the full URL:\n' +
-						'1. Open the Reddit post in your browser\n' +
-						'2. Copy the URL from the address bar\n' +
-						'3. It should look like: https://www.reddit.com/r/subreddit/comments/postid/title/'
-					);
-				} else {
-					throw new Error(
-						'Reddit is blocking access to this post (403 Forbidden). This may happen if:\n' +
-						'- The post is private or restricted\n' +
-						'- Reddit is rate-limiting requests\n' +
-						'- The post has been removed\n\n' +
-						'Please try again later or use a different post URL.'
-					);
-				}
+				throw new Error(
+					'Reddit is blocking access to this post (403 Forbidden).\n\n' +
+					'This typically happens when:\n' +
+					'• Reddit detects server-side requests from certain IP ranges\n' +
+					'• The post is private, restricted, or removed\n' +
+					'• Reddit is rate-limiting requests\n\n' +
+					'Possible solutions:\n' +
+					'1. Wait a few minutes and try again\n' +
+					'2. Ensure you\'re using the full post URL (not a shortlink)\n' +
+					'3. Verify the post is public and accessible\n' +
+					'4. Try a different Reddit post\n\n' +
+					'URL format should be: https://www.reddit.com/r/subreddit/comments/postid/title/'
+				);
+			} else if (res.status === 404) {
+				throw new Error(
+					'Reddit post not found (404). Please check:\n' +
+					'• The URL is correct and complete\n' +
+					'• The post exists and is accessible\n' +
+					'• You\'re using the full URL format: https://www.reddit.com/r/subreddit/comments/postid/title/'
+				);
 			} else if (res.status === 429) {
-				throw new Error('Reddit rate limit exceeded. Please wait a few minutes and try again.');
+				throw new Error(
+					'Reddit rate limit exceeded.\n\n' +
+					'Please wait 5-10 minutes before trying again. Reddit limits the number of requests from the same source.'
+				);
 			} else {
-				throw new Error(`Reddit returned HTML instead of JSON (status: ${res.status}). Please use the full post URL format: https://www.reddit.com/r/subreddit/comments/postid/title/`);
+				throw new Error(
+					`Reddit returned an error (status: ${res.status}).\n\n` +
+					'Please ensure:\n' +
+					'• You\'re using the full post URL (not a shortlink)\n' +
+					'• The URL format is: https://www.reddit.com/r/subreddit/comments/postid/title/\n' +
+					'• The post is public and accessible\n' +
+					'• Try again in a few minutes'
+				);
 			}
 		}
 
