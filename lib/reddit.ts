@@ -1,3 +1,70 @@
+/**
+ * Helper function to fetch with proxy fallback for Vercel
+ * Tries direct fetch first, then uses proxy if blocked
+ */
+async function fetchWithProxyFallback(url: string, options: RequestInit = {}): Promise<Response> {
+	const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
+	
+	// Try direct fetch first
+	try {
+		const res = await fetch(url, {
+			...options,
+			signal: AbortSignal.timeout(10000),
+		});
+		
+		// If we got blocked, try proxy on Vercel
+		if (res.status === 403 && isVercel) {
+			console.log('Got 403, trying proxy fallback...');
+			// Use AllOrigins proxy to bypass IP blocking
+			const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+			const proxyRes = await fetch(proxyUrl, {
+				signal: AbortSignal.timeout(15000),
+			});
+			
+			if (proxyRes.ok) {
+				const proxyData = await proxyRes.json();
+				if (proxyData.contents) {
+					// Create a mock Response object with the proxied content
+					return new Response(proxyData.contents, {
+						status: 200,
+						headers: {
+							'content-type': res.headers.get('content-type') || 'application/json',
+						},
+					});
+				}
+			}
+		}
+		
+		return res;
+	} catch (error) {
+		// If direct fetch fails and we're on Vercel, try proxy
+		if (isVercel && error instanceof Error && !error.message.includes('timeout')) {
+			console.log('Direct fetch failed, trying proxy fallback...');
+			try {
+				const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+				const proxyRes = await fetch(proxyUrl, {
+					signal: AbortSignal.timeout(15000),
+				});
+				
+				if (proxyRes.ok) {
+					const proxyData = await proxyRes.json();
+					if (proxyData.contents) {
+						return new Response(proxyData.contents, {
+							status: 200,
+							headers: {
+								'content-type': 'application/json',
+							},
+						});
+					}
+				}
+			} catch (proxyError) {
+				console.error('Proxy also failed:', proxyError);
+			}
+		}
+		throw error;
+	}
+}
+
 export async function fetchRedditComments(postUrl: string) {
 	// Use Reddit's public JSON API - no authentication required!
 	// Just append .json to any Reddit URL to get JSON data
@@ -65,7 +132,7 @@ export async function fetchRedditComments(postUrl: string) {
 				const jsonUrl = `${apiUrl}.json`;
 				console.log('Strategy 1: Trying .json endpoint directly:', jsonUrl);
 				
-				const jsonRes = await fetch(jsonUrl, {
+				const jsonRes = await fetchWithProxyFallback(jsonUrl, {
 					headers: {
 						'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
 						'Accept': 'application/json',
@@ -74,7 +141,6 @@ export async function fetchRedditComments(postUrl: string) {
 						'Origin': 'https://www.reddit.com',
 					},
 					redirect: 'follow',
-					signal: AbortSignal.timeout(10000),
 				});
 				
 				if (jsonRes.ok && jsonRes.headers.get('content-type')?.includes('application/json')) {
@@ -108,14 +174,13 @@ export async function fetchRedditComments(postUrl: string) {
 				try {
 					console.log('Strategy 2: Trying HTML resolution with minimal headers');
 					
-					const htmlRes = await fetch(apiUrl, {
+					const htmlRes = await fetchWithProxyFallback(apiUrl, {
 						method: 'GET',
 						headers: {
 							'User-Agent': 'Mozilla/5.0 (compatible; RedditBot/1.0)',
 							'Accept': 'text/html',
 						},
 						redirect: 'follow',
-						signal: AbortSignal.timeout(15000),
 					});
 					
 					if (htmlRes.ok && htmlRes.status !== 403) {
@@ -175,7 +240,7 @@ export async function fetchRedditComments(postUrl: string) {
 				try {
 					console.log('Strategy 3: Trying HTML resolution with full browser headers');
 					
-					const htmlRes = await fetch(apiUrl, {
+					const htmlRes = await fetchWithProxyFallback(apiUrl, {
 						method: 'GET',
 						headers: {
 							'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -192,7 +257,6 @@ export async function fetchRedditComments(postUrl: string) {
 							'Sec-Fetch-User': '?1',
 						},
 						redirect: 'follow',
-						signal: AbortSignal.timeout(15000),
 					});
 					
 					if (htmlRes.ok && htmlRes.status !== 403) {
@@ -276,7 +340,8 @@ export async function fetchRedditComments(postUrl: string) {
 
 		// Use realistic browser headers to avoid being blocked
 		// Note: Reddit may still block server-side requests from certain IP ranges
-		const res = await fetch(apiUrl, {
+		// fetchWithProxyFallback will automatically use proxy on Vercel if blocked
+		const res = await fetchWithProxyFallback(apiUrl, {
 			headers: {
 				// Realistic browser User-Agent
 				'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -294,8 +359,6 @@ export async function fetchRedditComments(postUrl: string) {
 			},
 			// Follow redirects
 			redirect: 'follow',
-			// Add timeout to prevent hanging
-			signal: AbortSignal.timeout(30000), // 30 second timeout
 		});
 
 		// Check content type before parsing
