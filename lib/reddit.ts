@@ -1,6 +1,6 @@
 /**
- * Helper function to fetch with proxy fallback for Vercel
- * Tries direct fetch first, then uses proxy if blocked
+ * Helper function to fetch with multiple proxy fallbacks for Vercel
+ * Tries direct fetch first, then uses multiple proxy services if blocked
  */
 async function fetchWithProxyFallback(url: string, options: RequestInit = {}): Promise<Response> {
 	const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
@@ -9,56 +9,188 @@ async function fetchWithProxyFallback(url: string, options: RequestInit = {}): P
 	try {
 		const res = await fetch(url, {
 			...options,
-			signal: AbortSignal.timeout(10000),
+			signal: AbortSignal.timeout(8000),
 		});
 		
-		// If we got blocked, try proxy on Vercel
+		// If we got blocked, try proxies on Vercel
 		if (res.status === 403 && isVercel) {
-			console.log('Got 403, trying proxy fallback...');
-			// Use AllOrigins proxy to bypass IP blocking
-			const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-			const proxyRes = await fetch(proxyUrl, {
-				signal: AbortSignal.timeout(15000),
-			});
+			console.log('Got 403, trying proxy fallbacks...');
 			
-			if (proxyRes.ok) {
-				const proxyData = await proxyRes.json();
-				if (proxyData.contents) {
-					// Create a mock Response object with the proxied content
-					return new Response(proxyData.contents, {
-						status: 200,
-						headers: {
-							'content-type': res.headers.get('content-type') || 'application/json',
-						},
-					});
+			// Try multiple proxy services (faster ones first)
+			const proxyServices = [
+				`https://corsproxy.io/?${encodeURIComponent(url)}`, // Usually fastest
+				`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, // Raw endpoint is faster
+				`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, // Fallback to JSON endpoint
+				`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+			];
+			
+			for (const proxyUrl of proxyServices) {
+				try {
+					console.log(`Trying proxy: ${proxyUrl.substring(0, 50)}...`);
+					
+					// Use Promise.race to implement timeout manually for better control
+					const controller = new AbortController();
+					const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+					
+					try {
+						const proxyRes = await fetch(proxyUrl, {
+							signal: controller.signal,
+						});
+						
+						clearTimeout(timeoutId);
+						
+						if (proxyRes.ok) {
+							// AllOrigins raw format (faster)
+							if (proxyUrl.includes('allorigins') && proxyUrl.includes('raw')) {
+								const text = await proxyRes.text();
+								if (text && !text.trim().startsWith('<!DOCTYPE')) {
+									console.log('Proxy succeeded (AllOrigins Raw)');
+									return new Response(text, {
+										status: 200,
+										headers: {
+											'content-type': res.headers.get('content-type') || 'application/json',
+										},
+									});
+								}
+							}
+							// AllOrigins JSON format
+							else if (proxyUrl.includes('allorigins')) {
+								const proxyData = await proxyRes.json();
+								if (proxyData.contents) {
+									console.log('Proxy succeeded (AllOrigins JSON)');
+									return new Response(proxyData.contents, {
+										status: 200,
+										headers: {
+											'content-type': res.headers.get('content-type') || 'application/json',
+										},
+									});
+								}
+							}
+							// CORSProxy format (usually fastest)
+							else if (proxyUrl.includes('corsproxy')) {
+								const text = await proxyRes.text();
+								if (text && !text.trim().startsWith('<!DOCTYPE')) {
+									console.log('Proxy succeeded (CORSProxy)');
+									return new Response(text, {
+										status: 200,
+										headers: {
+											'content-type': res.headers.get('content-type') || 'application/json',
+										},
+									});
+								}
+							}
+							// CodeTabs format
+							else if (proxyUrl.includes('codetabs')) {
+								const text = await proxyRes.text();
+								if (text && !text.trim().startsWith('<!DOCTYPE')) {
+									console.log('Proxy succeeded (CodeTabs)');
+									return new Response(text, {
+										status: 200,
+										headers: {
+											'content-type': res.headers.get('content-type') || 'application/json',
+										},
+									});
+								}
+							}
+						}
+					} catch (fetchError) {
+						clearTimeout(timeoutId);
+						if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+							console.log(`Proxy timeout: ${proxyUrl.substring(0, 50)}...`);
+						} else {
+							throw fetchError;
+						}
+					}
+				} catch (proxyError) {
+					console.log(`Proxy failed: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`);
+					continue; // Try next proxy
 				}
 			}
+			
+			console.log('All proxies failed, returning original 403 response');
 		}
 		
 		return res;
 	} catch (error) {
-		// If direct fetch fails and we're on Vercel, try proxy
-		if (isVercel && error instanceof Error && !error.message.includes('timeout')) {
-			console.log('Direct fetch failed, trying proxy fallback...');
-			try {
-				const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-				const proxyRes = await fetch(proxyUrl, {
-					signal: AbortSignal.timeout(15000),
-				});
-				
-				if (proxyRes.ok) {
-					const proxyData = await proxyRes.json();
-					if (proxyData.contents) {
-						return new Response(proxyData.contents, {
-							status: 200,
-							headers: {
-								'content-type': 'application/json',
-							},
+		// If direct fetch fails and we're on Vercel, try proxies
+		if (isVercel) {
+			console.log('Direct fetch failed, trying proxy fallbacks...');
+			
+			const proxyServices = [
+				`https://corsproxy.io/?${encodeURIComponent(url)}`, // Usually fastest
+				`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, // Raw endpoint is faster
+				`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, // Fallback to JSON endpoint
+				`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+			];
+			
+			for (const proxyUrl of proxyServices) {
+				try {
+					console.log(`Trying proxy: ${proxyUrl.substring(0, 50)}...`);
+					
+					// Use Promise.race to implement timeout manually for better control
+					const controller = new AbortController();
+					const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+					
+					try {
+						const proxyRes = await fetch(proxyUrl, {
+							signal: controller.signal,
 						});
+						
+						clearTimeout(timeoutId);
+						
+					if (proxyRes.ok) {
+						// AllOrigins raw format (faster)
+						if (proxyUrl.includes('allorigins') && proxyUrl.includes('raw')) {
+							const text = await proxyRes.text();
+							if (text && !text.trim().startsWith('<!DOCTYPE')) {
+								console.log('Proxy succeeded (AllOrigins Raw)');
+								return new Response(text, {
+									status: 200,
+									headers: {
+										'content-type': 'application/json',
+									},
+								});
+							}
+						}
+						// AllOrigins JSON format
+						else if (proxyUrl.includes('allorigins')) {
+							const proxyData = await proxyRes.json();
+							if (proxyData.contents) {
+								console.log('Proxy succeeded (AllOrigins JSON)');
+								return new Response(proxyData.contents, {
+									status: 200,
+									headers: {
+										'content-type': 'application/json',
+									},
+								});
+							}
+						}
+						// CORSProxy or CodeTabs (direct text)
+						else {
+							const text = await proxyRes.text();
+							if (text && !text.trim().startsWith('<!DOCTYPE')) {
+								console.log('Proxy succeeded');
+								return new Response(text, {
+									status: 200,
+									headers: {
+										'content-type': 'application/json',
+									},
+								});
+							}
+						}
 					}
+					} catch (fetchError) {
+						clearTimeout(timeoutId);
+						if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+							console.log(`Proxy timeout: ${proxyUrl.substring(0, 50)}...`);
+						} else {
+							throw fetchError;
+						}
+					}
+				} catch (proxyError) {
+					console.log(`Proxy failed: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`);
+					continue;
 				}
-			} catch (proxyError) {
-				console.error('Proxy also failed:', proxyError);
 			}
 		}
 		throw error;
