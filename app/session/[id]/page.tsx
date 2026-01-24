@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/middleware';
 import { notFound } from 'next/navigation';
+import { SignalSource } from '@prisma/client';
 import ResultsSummary from '@/components/ResultSummary';
 import ResultsTable from '@/components/ResultTable';
 import PlatformBadge from '@/components/PlatformBadge';
@@ -55,7 +56,7 @@ export default async function SessionPage({
 
 	// Calculate summary stats
 	const explicitCount = analysisSession.participants.filter((p) =>
-		p.contactSignals.some((s) => s.source === 'EXPLICIT_COMMENT')
+		p.contactSignals.some((s) => s.source === SignalSource.EXPLICIT_COMMENT)
 	).length;
 
 	const platformName =

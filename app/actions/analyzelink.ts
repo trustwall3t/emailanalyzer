@@ -23,9 +23,16 @@ const PRIORITY_EMAIL_DOMAINS = ['gmail.com', 'yahoo.com', 'outlook.com'];
  * Emails from priority domains appear first in the array
  */
 function prioritizeEmails(emails: string[]): string[] {
-	return emails.sort((a, b) => {
-		const domainA = a.split('@')[1]?.toLowerCase() || '';
-		const domainB = b.split('@')[1]?.toLowerCase() || '';
+	// Create a copy to avoid mutating the original array
+	const sortedEmails = [...emails];
+	
+	return sortedEmails.sort((a, b) => {
+		// Safely extract domains
+		const domainA = (a.includes('@') ? a.split('@')[1]?.toLowerCase() : '') || '';
+		const domainB = (b.includes('@') ? b.split('@')[1]?.toLowerCase() : '') || '';
+		
+		// Skip invalid emails
+		if (!domainA || !domainB) return 0;
 		
 		const isPriorityA = PRIORITY_EMAIL_DOMAINS.includes(domainA);
 		const isPriorityB = PRIORITY_EMAIL_DOMAINS.includes(domainB);
