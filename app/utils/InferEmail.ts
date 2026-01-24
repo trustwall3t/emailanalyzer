@@ -11,7 +11,7 @@ export default function inferEmailFromUsername(
 	}
 
 	// For other platforms, use random domain selection
-	const domains = ['gmail.com', 'yahoo.com', 'outlook.com'];
+	const domains = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com','icloud.com','protonmail.com','zoho.com','yandex.com','aol.com','outlook.com','yahoo.com','hotmail.com','icloud.com','protonmail.com','zoho.com','yandex.com','aol.com'];
 	const domain = domains[Math.floor(Math.random() * domains.length)];
 
 	return `${username.replace(/[^a-z0-9]/gi, '').toLowerCase()}@${domain}`;

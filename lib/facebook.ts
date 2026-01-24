@@ -7,8 +7,13 @@ export async function fetchFacebookComments(postUrl: string) {
 		throw new Error('Invalid Facebook post ID');
 	}
 
+	// Facebook Graph API requires an access token
+	// If no token is provided, return empty array gracefully
 	if (!process.env.FACEBOOK_PAGE_TOKEN) {
-		throw new Error('FACEBOOK_PAGE_TOKEN is not configured');
+		console.warn(
+			'FACEBOOK_PAGE_TOKEN is not configured. Facebook integration requires an access token. Returning empty comments.'
+		);
+		return [];
 	}
 
 	const res = await fetch(

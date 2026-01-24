@@ -13,6 +13,7 @@ import { fetchRedditComments } from '@/lib/reddit';
 import { fetchYouTubeComments } from '@/lib/youtube';
 import { capitalize } from '../utils/Helpers';
 import inferEmailFromUsername from '../utils/InferEmail';
+import { extractEmailsFromText } from '../utils/ExtractEmail';
 
 export async function analyzeLink({ sourceUrl }: { sourceUrl: string }) {
 	// Require authentication - only admins can create sessions
@@ -51,54 +52,119 @@ export async function analyzeLink({ sourceUrl }: { sourceUrl: string }) {
 				break;
 		}
 
-		// Process participants and infer emails
+		// Group comments by username to aggregate and avoid duplicates
+		const commentsByUser = new Map<
+			string,
+			{
+				username: string;
+				comments: string[];
+				platformUserId?: string;
+				extractedEmails: Set<string>;
+			}
+		>();
+
+		// Process all comments and group by user
+		for (const comment of comments) {
+			const username = comment.username;
+			const existing = commentsByUser.get(username);
+
+			// Extract emails from this comment
+			const extractedEmails = extractEmailsFromText(comment.comment);
+
+			if (existing) {
+				// User already exists, aggregate their comments
+				existing.comments.push(comment.comment);
+				extractedEmails.forEach((email) => existing.extractedEmails.add(email));
+				// Keep the first platformUserId we encounter
+				if (!existing.platformUserId && comment.platformUserId) {
+					existing.platformUserId = comment.platformUserId;
+				}
+			} else {
+				// New user
+				commentsByUser.set(username, {
+					username,
+					comments: [comment.comment],
+					platformUserId: comment.platformUserId,
+					extractedEmails: new Set(extractedEmails),
+				});
+			}
+		}
+
+		// Process each unique participant
 		const participantsData = [];
 		let totalContactSignals = 0;
 
-		for (const comment of comments) {
-			// Infer email from username
-			const inferredEmail = inferEmailFromUsername(
-				comment.username,
-				platform
-			);
-			const confidence = Math.floor(Math.random() * 20) + 55; // 55-75% confidence
+		for (const [username, userData] of commentsByUser) {
+			// Get the first comment snippet for display
+			const firstComment = userData.comments[0];
+			const commentSnippet = firstComment.substring(0, 200);
 
-			// Create participant
+			// Create participant with aggregated comment count
 			const participant = await prisma.participant.create({
 				data: {
 					sessionId: analysisSession.id,
-					username: comment.username,
-					displayName: capitalize(comment.username),
+					username: userData.username,
+					displayName: capitalize(userData.username),
 					profileUrl: getProfileUrl(
 						platform,
-						comment.username,
-						comment.platformUserId
+						userData.username,
+						userData.platformUserId
 					),
-					commentSnippet: comment.comment.substring(0, 200),
-					commentCount: 1,
+					commentSnippet,
+					commentCount: userData.comments.length, // Total comments from this user
 				},
 			});
 
-			// Create contact signal (inferred email)
-			await prisma.contactSignal.create({
-				data: {
-					participantId: participant.id,
-					type: ContactType.EMAIL,
-					value: inferredEmail,
-					source: SignalSource.USERNAME_INFERENCE,
-					confidence,
-					isPrimary: true,
-					isMasked: true,
-				},
-			});
+			// If we found emails in any of the user's comments, use those (high confidence)
+			if (userData.extractedEmails.size > 0) {
+				const emailsArray = Array.from(userData.extractedEmails);
+				for (let i = 0; i < emailsArray.length; i++) {
+					const email = emailsArray[i];
+					await prisma.contactSignal.create({
+						data: {
+							participantId: participant.id,
+							type: ContactType.EMAIL,
+							value: email,
+							source: SignalSource.EXPLICIT_COMMENT,
+							confidence: 95, // High confidence for explicit emails
+							isPrimary: i === 0, // First email is primary
+							isMasked: true,
+						},
+					});
+					totalContactSignals++;
+				}
 
-			totalContactSignals++;
-			participantsData.push({
-				id: participant.id,
-				username: participant.username,
-				email: inferredEmail,
-				confidence: confidence / 100,
-			});
+				participantsData.push({
+					id: participant.id,
+					username: participant.username,
+					email: emailsArray[0], // Use first extracted email
+					confidence: 0.95,
+				});
+			} else {
+				// Fall back to inferred email from username (lower confidence)
+				const inferredEmail = inferEmailFromUsername(userData.username, platform);
+				const confidence = Math.floor(Math.random() * 20) + 55; // 55-75% confidence
+
+				await prisma.contactSignal.create({
+					data: {
+						participantId: participant.id,
+						type: ContactType.EMAIL,
+						value: inferredEmail,
+						source: SignalSource.USERNAME_INFERENCE,
+						confidence,
+						isPrimary: true,
+						isMasked: true,
+					},
+				});
+
+				totalContactSignals++;
+				participantsData.push({
+					id: participant.id,
+					username: participant.username,
+					email: inferredEmail,
+					confidence: confidence / 100,
+				});
+			}
 		}
 
 		// Update session with final stats
@@ -115,6 +181,14 @@ export async function analyzeLink({ sourceUrl }: { sourceUrl: string }) {
 
 		return analysisSession.id;
 	} catch (error) {
+		// Log the error for debugging
+		console.error('Error analyzing link:', {
+			url: sourceUrl,
+			platform,
+			error: error instanceof Error ? error.message : String(error),
+			stack: error instanceof Error ? error.stack : undefined,
+		});
+
 		// Mark session as failed
 		await prisma.analysisSession.update({
 			where: { id: analysisSession.id },
@@ -122,7 +196,14 @@ export async function analyzeLink({ sourceUrl }: { sourceUrl: string }) {
 				status: SessionStatus.FAILED,
 			},
 		});
-		throw error;
+
+		// Re-throw with a more user-friendly message
+		if (error instanceof Error) {
+			throw new Error(
+				`Failed to analyze ${platform.toLowerCase()} link: ${error.message}`
+			);
+		}
+		throw new Error(`Failed to analyze link: ${String(error)}`);
 	}
 }
 

@@ -25,8 +25,10 @@ export default function DeleteSessionButton({
 			const result = await deleteSession(sessionId);
 			if (result?.success) {
 				// Redirect to home page after successful deletion
-				router.push('/');
-				router.refresh();
+				// Use window.location for a more reliable redirect
+				window.location.href = '/';
+			} else {
+				throw new Error('Delete operation did not succeed');
 			}
 		} catch (error) {
 			console.error('Failed to delete session:', error);

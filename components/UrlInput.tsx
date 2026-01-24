@@ -22,10 +22,10 @@ export default function UrlInput() {
 		? 'youtube'
 		: null;
 
-	const isUnsupportedPlatform =
-		platform === 'reddit' || platform === 'facebook';
-	const unsupportedPlatformName =
-		platform === 'reddit' ? 'Reddit' : 'Facebook';
+	// Only Facebook is unsupported (requires access token)
+	// Reddit now works without any token!
+	const isUnsupportedPlatform = platform === 'facebook';
+	const unsupportedPlatformName = 'Facebook';
 
 	const handleSubmit = () => {
 		setError(null);
@@ -37,7 +37,7 @@ export default function UrlInput() {
 
 		if (isUnsupportedPlatform) {
 			setError(
-				`${unsupportedPlatformName} is not yet supported. Please use YouTube links for now.`
+				`${unsupportedPlatformName} integration requires an access token. Please use YouTube or Reddit links instead.`
 			);
 			return;
 		}
@@ -47,7 +47,13 @@ export default function UrlInput() {
 				const result = await analyzeLink({ sourceUrl: url });
 				router.push(`/session/${result}`);
 			} catch (err) {
-				setError('Failed to analyze link');
+				// Show the actual error message from the server
+				const errorMessage =
+					err instanceof Error
+						? err.message
+						: 'Failed to analyze link. Please check the URL and try again.';
+				setError(errorMessage);
+				console.error('Error analyzing link:', err);
 			}
 		});
 	};
@@ -57,7 +63,7 @@ export default function UrlInput() {
 			<input
 				value={url}
 				onChange={(e) => setUrl(e.target.value)}
-				placeholder='https://youtube.com/watch?v=...'
+				placeholder='https://youtube.com/watch?v=... or https://reddit.com/r/subreddit/comments/postid/...'
 				className='w-full text-black rounded-lg border border-neutral-900 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900'
 			/>
 
@@ -71,8 +77,8 @@ export default function UrlInput() {
 							{unsupportedPlatformName} support coming soon
 						</p>
 						<p className='text-xs text-amber-700 mt-1'>
-							{unsupportedPlatformName} integration is currently
-							under development. Please use YouTube links for now.
+							{unsupportedPlatformName} integration requires an access token.
+							Please use YouTube or Reddit links for now.
 						</p>
 					</div>
 				</div>
@@ -80,7 +86,7 @@ export default function UrlInput() {
 
 			{error && (
 				<div className='rounded-lg bg-red-50 border border-red-200 p-4'>
-					<p className='text-sm text-red-800'>{error}</p>
+					<p className='text-sm text-red-800 whitespace-pre-line'>{error}</p>
 				</div>
 			)}
 
